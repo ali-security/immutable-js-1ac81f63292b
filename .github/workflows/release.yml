@@ -1,57 +1,52 @@
-name: Release
+name: Build
 
 on:
   workflow_dispatch: ~
-  release:
-    types: [published]
 
 permissions:
-  id-token: write  # Required for OIDC / npm
   contents: read
 
 jobs:
   build:
-    name: 'Build & Publish to NPM'
-    permissions:
-      contents: read
-      id-token: write
+    name: 'Build dist, run tests, pack'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # use node 6 to build, as v3 is an old version
+
+      # immutable 3.x carries a 2016-era toolchain (grunt 0.4.5 / gulp 3.9 /
+      # jest-cli 0.5.10). Node 6 is the only runtime that toolchain supports:
+      # Node 4 and older lack ES6 spread in jest-cli's own sources, Node 0.10/0.12
+      # lack a global Promise, and Node 8+ removed Promise.defer which
+      # jest-cli 0.5's JasmineReporter depends on.
       - uses: actions/setup-node@v4
         with:
           node-version: '6'
-          registry-url: 'https://registry.npmjs.org'
-      - uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.OS }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: ${{ runner.OS }}-node-
-      - run: npm ci
-      
-      # use node 20 to publish
+
+      - name: Install dev dependencies
+        run: npm install --ignore-scripts --no-optional
+
+      - name: Build dist from src
+        run: |
+          ./node_modules/.bin/grunt build
+          ./node_modules/.bin/gulp typedefs
+
+      - name: Report dist drift vs the committed dist
+        run: git diff --stat -- dist
+
+      - name: Run test suite (jest)
+        run: ./node_modules/.bin/jest
+
+      # The published tarball uses npm's reproducible tar layout (fixed
+      # 1985-10-26 mtimes), which npm 3 (bundled with Node 6) does not produce.
+      # Node 22 ships npm 10.9.x, which reproduces it byte for byte.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
-      - uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.OS }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: ${{ runner.OS }}-node-
+          node-version: '22'
+      - name: Pack
+        run: npm pack
 
-      # Ensure npm 11.5.1 or later is installed
-      - name: Update npm
-        run: npm install -g npm@latest
-      - run: npm run build
-      - name: 'Determine NPM tag: latest or next depending if we are on a prerelease or not (version with hyphen should be a prerelease)'
-        id: npm_tag
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if [[ $VERSION == *-* ]]; then
-            echo "TAG=next" >> "$GITHUB_OUTPUT"
-          else
-            echo "TAG=latest" >> "$GITHUB_OUTPUT"
-          fi
-      - run: cd npm && npm publish --tag ${{ steps.npm_tag.outputs.TAG }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: immutable-3.8.3.tgz
+          if-no-files-found: error
