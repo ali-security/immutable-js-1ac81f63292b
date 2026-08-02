@@ -1,16 +1,17 @@
 name: Build
 
 on:
-  workflow_dispatch: ~
-
+  workflow_dispatch:
 permissions:
   contents: read
 
 jobs:
   build:
-    name: 'Build dist, run tests, pack'
+    name: Build dist, run tests, pack
     runs-on: ubuntu-latest
     steps:
+      - name: Configure npm time machine registry
+        run: npm config set registry https://:2026-03-06T08%3A51%3A38.817000Z@time-machines-npm.sealsecurity.io/
       - uses: actions/checkout@v4
 
       # immutable 3.x carries a 2016-era toolchain (grunt 0.4.5 / gulp 3.9 /
